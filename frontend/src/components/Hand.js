@@ -1,16 +1,15 @@
 import React from "react";
-import sortCards from "../utils/sortCards";
 import Card from "./Card";
 
-export default function Hand({ hand, selectedCards, toggleSelectCard }) {
+export default function Hand({ hand, selectedCards, onCardClick }) {
   return (
     <div>
-      {sortCards(hand).map((card, idx) => (
+      {hand.map((card, idx) => (
         <Card
           key={idx}
           card={card}
           selected={selectedCards.includes(idx)}
-          onClick={() => toggleSelectCard(idx)}
+          onClick={() => onCardClick(idx)}
         />
       ))}
     </div>

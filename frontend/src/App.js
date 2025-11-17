@@ -1,29 +1,41 @@
 import React, { useState, useEffect } from "react";
 import { io } from "socket.io-client";
-import sortCards from "./utils/sortCards";
 import Hand from "./components/Hand";
 import Stack from "./components/Stack";
-import ScoreBoard from "./components/ScoreBoard";
+import ScoresTable from "./components/ScoresTable";
 
+function cardToString(card) {
+  if (!card) return "";
+  if (card.value === "JOKER") return "🃏";
+  return `${card.value}${card.suit}`;
+}
+function calcPoints(hand) {
+  const pointsMap = {
+    "A": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7,
+    "8": 8, "9": 9, "10": 10, J: 10, Q: 10, K: 10, "JOKER": 0
+  };
+  return (hand || []).reduce((acc, c) => acc + pointsMap[c.value], 0);
+}
 function isSequence(cards) {
   if (cards.length < 3) return false;
   let valuesArr = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
-  let jokers = cards.filter(c => c.value === "JOKER");
   let noJokers = cards.filter(c => c.value !== "JOKER");
+  let jokers = cards.length - noJokers.length;
   if (noJokers.length < 2) return false;
   let suit = noJokers[0].suit;
   if (!noJokers.every(card => card.suit === suit)) return false;
-  let nums = noJokers.map(c => valuesArr.indexOf(c.value)).sort((a, b) => a - b);
-  let min = nums[0], max = nums[nums.length - 1];
+  let nums = noJokers.map(c => valuesArr.indexOf(c.value)).sort((a,b)=>a-b);
+  let min = nums[0], max = nums[nums.length-1];
   let needed = max - min + 1 - noJokers.length;
-  return needed <= jokers.length;
+  return needed <= jokers;
 }
 
-export default function App() {
+function App() {
   const [lobby, setLobby] = useState([]);
   const [username, setUsername] = useState("");
   const [socket, setSocket] = useState(null);
   const [joined, setJoined] = useState(false);
+
   const [myHand, setMyHand] = useState([]);
   const [handPoints, setHandPoints] = useState(0);
   const [stack, setStack] = useState([]);
@@ -38,13 +50,14 @@ export default function App() {
   const [roundNum, setRoundNum] = useState(1);
   const [gamePointLimit, setGamePointLimit] = useState(null);
   const [proposedLimit, setProposedLimit] = useState("");
+  const [limitVoters, setLimitVoters] = useState({});
   const [reEntry, setReEntry] = useState({});
   const [winner, setWinner] = useState(null);
-  const last5Bundles = playedBundles.slice(-5);
 
   useEffect(() => {
     const newSocket = io("http://localhost:5050");
     setSocket(newSocket);
+
     newSocket.on("lobbyUpdate", users => setLobby(users || []));
     newSocket.on("yourHand", cards => setMyHand(cards || []));
     newSocket.on("handPoints", points => setHandPoints(points));
@@ -103,7 +116,11 @@ export default function App() {
       if (res && res.roundNum) setRoundNum(res.roundNum);
       if (res && res.winner) setWinner(res.winner);
     });
+    newSocket.on("limitProposal", (limit) => setProposedLimit(limit||""));
+    newSocket.on("limitVoteUpdate", (votes) => setLimitVoters(votes||{}));
+    newSocket.on("limitFinalized", limit => setGamePointLimit(limit));
     newSocket.on("gameWinner", win => setWinner(win));
+
     return () => newSocket.disconnect();
   }, []);
 
@@ -124,17 +141,13 @@ export default function App() {
     }
   }
 
-  const allSameValue =
-  selectedCards.length > 1 &&
-  selectedCards.every(idx => myHand[idx]?.value === myHand[selectedCards[0]]?.value);
+  const allSameValue = selectedCards.length > 0 && selectedCards.every(idx => myHand[idx]?.value === myHand[selectedCards[0]]?.value && myHand[idx]?.value !== "JOKER");
+  const validSequence = isSequence(selectedCards.map(idx=>myHand[idx]));
+  const canPlaySelected =
+    selectedCards.length === 1 ||
+    (selectedCards.length >= 2 && allSameValue) ||
+    (selectedCards.length >= 3 && validSequence);
 
-const canPlaySelected =
-  selectedCards.length === 1 ||
-  (selectedCards.length > 1 && allSameValue) ||
-  (selectedCards.length >= 3 && validSequence); // validSequence as before
-
-  const validSequence = isSequence(selectedCards.map(idx => myHand[idx]));
-  
   function playSelectedCards() {
     if (
       currentTurn === socket.id &&
@@ -143,7 +156,9 @@ const canPlaySelected =
       canPlaySelected &&
       !declareStatus
     ) {
-      socket.emit("playCards", { cards: selectedCards.map(index => (myHand || [])[index]) });
+      socket.emit("playCards", {
+        cards: selectedCards.map(index => (myHand || [])[index])
+      });
       setSelectedCards([]);
     }
   }
@@ -153,128 +168,127 @@ const canPlaySelected =
       setPickPhase(false);
     }
   }
-  function firstPlayerPick() { socket.emit("firstTurnPick"); }
-
+  function onDeclare() {
+    socket.emit("declare");
+  }
+  function firstPlayerPick() {
+    socket.emit("firstTurnPick");
+  }
   const thisPlayer = lobby.find(u => u.name === username);
-  const isDealer = thisPlayer && lobby.length && thisPlayer.id === lobby[0].id;
+
+  // Declare button should only show when all conditions are met
+  const canDeclare =
+    thisPlayer &&
+    userTurns &&
+    userTurns[thisPlayer.id] >= 2 &&
+    handPoints <= 15 &&
+    !declareStatus &&
+    !pickPhase &&
+    currentTurn === thisPlayer.id;
 
   function totalForPlayer(playerName) {
-    return (scoresTable || []).reduce(
-      (sum, round) => sum + (round[playerName] || 0), 0
-    );
+    return (scoresTable || []).reduce((sum, round) => sum + (round[playerName] || 0), 0);
   }
-  const playerNames = (lobby || []).map(u => u.name) || [];
+  const playerNames = (lobby || []).map(u=>u.name) || [];
+  const reEntryPlayers = Object.entries(reEntry || {}).filter(([n,v])=>v>0).map(([n])=>n);
 
   return (
-    <div style={{ fontFamily: "sans-serif", minHeight: "100vh", background: "#f8fafc" }}>
-      <div style={{ background: "#282c34", color: "#fff", padding: "16px 0",
-          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: "2rem", fontWeight: "bold", paddingLeft: 32 }}>
-          🂡 Multiplayer Card Game
+    <div style={{ padding: 40 }}>
+      {gameState && (
+        <div>
+          <ScoresTable
+            rounds={scoresTable}
+            playerNames={playerNames}
+            totalForPlayer={totalForPlayer}
+          />
         </div>
-        <div style={{ paddingRight: 32 }}>
-          {gameState && (
-            <div style={{ color: "#ffc107", fontWeight: 600 }}>
-              Round: {roundNum} &nbsp;&nbsp;|&nbsp;&nbsp;
-              Current turn: <b>{lobby.find(l => l.id === currentTurn)?.name || "?"}</b>
-            </div>
+      )}
+
+      <h1>Multiplayer Card Game Lobby</h1>
+      {gameState && (
+      <><b>Round: {roundNum}</b><br/><b>Current turn:</b> {(lobby.find(l => l.id === currentTurn)?.name)||"?"}</>
+      )}
+      {!joined ? (
+        <div>
+          <input
+            placeholder="Enter your name"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+          />
+          <button onClick={handleJoin}>Join Lobby</button>
+        </div>
+      ) : (
+        <>
+          <p>Lobby users:</p>
+          <ul>
+            {(lobby || []).map(user => (
+              <li key={user?.id}>{user?.name}{reEntryPlayers.includes(user.name) && <span style={{color:'red',fontWeight:'bold'}}> (1 re-entry/life used)</span>}</li>
+            ))}
+          </ul>
+          {!gameState && lobby.length >= 2 && (
+            <button onClick={() => socket.emit("startGame")}>Start Game</button>
           )}
-        </div>
-      </div>
-      <div style={{ margin: "20px 32px 0 32px", display: "flex", alignItems: "center" }}>
-        {isDealer && !gamePointLimit && !gameState && (
-          <>
-            <input style={{ fontSize: 18, padding: 4, width: 120 }}
-              type="number" placeholder="Game point limit"
-              value={proposedLimit}
-              onChange={e => setProposedLimit(e.target.value)}
-            />
-            <button style={{ marginLeft: 10, fontSize: 18, padding: "4px 16px", background: "#0077ff", color: "#fff", border: 0, borderRadius: 4 }}
-              onClick={() => {
-                socket.emit("proposeLimit", Number(proposedLimit));
-                setGamePointLimit(Number(proposedLimit));
-              }}>
-              Set Limit
-            </button>
-          </>
-        )}
-        {gamePointLimit && <div style={{ fontSize: 20, marginLeft: 12 }}><b>Game Point Limit: {gamePointLimit}</b></div>}
-      </div>
-      <div style={{ margin: "16px 32px" }}>
-        {!joined ? (
-          <div>
-            <input
-              placeholder="Enter your name"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              style={{ fontSize: "1.2rem", padding: 8, borderRadius: 4, border: "1px solid #888" }}
-            />
-            <button style={{ marginLeft: 12, fontSize: "1.2rem", padding: "7px 20px", background: "#05c", color: "#fff", borderRadius: 4 }} onClick={handleJoin}>Join Lobby</button>
-          </div>
-        ) : (
-          <>
-            <div style={{ marginBottom: 8 }}>
-              Lobby:{" "}
-              {(lobby || []).map(user => (
-                <span key={user?.id} style={{ marginRight: 10, fontWeight: user?.id === lobby[0]?.id ? "bold" : undefined }}>
-                  {user?.name}
-                </span>
-              ))}
-            </div>
-            {!gameState && lobby.length >= 2 && (
-              <button style={{ fontSize: 18, background: "#7e3ff2", color: "#fff", padding: "6px 16px", borderRadius: 4 }}
-                onClick={() => socket.emit("startGame")}>Start Game</button>
-            )}
-            {gameState && (
-              <div>
-                <div style={{ display: "flex", gap: 44, background: "#fff", borderRadius: 16, boxShadow: "0 1px 6px #0002", padding: 22, marginTop: 16 }}>
-                  <div style={{ flex: 2, minWidth: 350 }}>
-                    <div style={{ fontSize: 22, marginBottom: 10, borderBottom: "2px solid #94a3b8" }}>🃏 Your Hand</div>
-                    <Hand hand={myHand} selectedCards={selectedCards} toggleSelectCard={toggleSelectCard} />
-                    <div style={{ fontSize: 18, marginBottom: 5 }}>Your total points: <b>{handPoints}</b></div>
-                    <div style={{ marginTop: 10 }}>
-                      {currentTurn === socket?.id && !pickPhase && selectedCards.length > 0 && canPlaySelected && (
-                        <button style={{ fontSize: 17, padding: "5px 18px", background: "#06f", color: "#fff", borderRadius: 5 }} onClick={playSelectedCards} disabled={!canPlaySelected}>
-                          Play Selected Cards
-                        </button>
-                      )}
-                    </div>
-                    {gameState && !userTurns[currentTurn] && currentTurn === socket?.id && (
-                      <button style={{ marginTop: 14, background: "#05c", color: "#fff", padding: "5px 15px", borderRadius: 5 }}
-                        onClick={firstPlayerPick}>Start your turn (draw from deck)</button>
-                    )}
-                  </div>
-                  <div style={{ flex: 2, minWidth: 180 }}>
-                    <div style={{ fontSize: 22, borderBottom: "2px solid #94a3b8", marginBottom: 10 }}>🗄️ Stack (last 5 cards)</div>
-                    <Stack stack={stack} />
-                    <div style={{ marginTop: 10, fontSize: 16 }}>
-                      <span style={{ color: "#555" }}>Last played bundle:</span>
-                      <span>
-                        <Hand hand={lastPlayedBundle || []} selectedCards={[]} toggleSelectCard={() => {}} />
-                      </span>
-                    </div>
-                    {pickPhase && (
-                      <div style={{ marginTop: 14, paddingTop: 8, borderTop: "1px solid #d3d3e0" }}>
-                        <div style={{ fontWeight: "bold", marginBottom: 4 }}>Pick a card</div>
-                        <button style={{ background: "#2684ff", padding: "5px 13px", color: "#fff", borderRadius: 5, margin: "0 3px" }} onClick={() => pickFrom("deck")}>From Deck</button>
-                        <span style={{ color: "#888" }}> | </span>
-                        <Hand
-                          hand={lastPlayedBundle || []}
-                          selectedCards={[]}
-                          toggleSelectCard={(_idx) => pickFrom("bundle", _idx)}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ minWidth: 280, flex: 1 }}>
-                    <ScoreBoard scoresTable={scoresTable} playerNames={playerNames} totalForPlayer={totalForPlayer} />
-                  </div>
+          {gameState ? (
+            <div>
+              <h2>Your Hand (select cards)</h2>
+              <Hand hand={myHand} selectedCards={selectedCards} onCardClick={toggleSelectCard} />
+              <h3>Your total points: {handPoints || calcPoints(myHand)}</h3>
+              {currentTurn === socket?.id && !pickPhase && selectedCards.length > 0 && canPlaySelected &&
+                <button onClick={playSelectedCards}>Play Selected Cards</button>
+              }
+              {canDeclare && (
+                <button style={{ marginLeft: 20, background: "#28a745", color: "#fff" }} onClick={onDeclare}>
+                  Declare
+                </button>
+              )}
+              {gameState && !userTurns[currentTurn] && currentTurn === socket?.id && (
+                <button onClick={firstPlayerPick}>Start your turn (draw from deck)</button>
+              )}
+              <Stack stack={stack} lastPlayedBundle={lastPlayedBundle} />
+              {pickPhase && (
+                <>
+                  <h3>Pick a card</h3>
+                  <button onClick={() => pickFrom("deck")}>Pick from Deck</button>
+                  <span> Or pick from previous player's bundle:</span>
+                  <Hand
+                    hand={lastPlayedBundle || []}
+                    selectedCards={[]}
+                    onCardClick={(_idx) => pickFrom("bundle", _idx)}
+                  />
+                </>
+              )}
+              <p>
+                {currentTurn === socket?.id
+                  ? pickPhase
+                    ? "Pick a card before next turn."
+                    : "It's your turn! Select card(s) and play, or declare if eligible."
+                  : "Waiting for other player..."}
+              </p>
+              {declareStatus && (
+                <div>
+                  <h2>Declare Result (Round {declareStatus.roundNum})</h2>
+                  <ul>
+                    {Object.entries(declareStatus.roundScore || {}).map(([name, points]) => (
+                      <li key={name}>{name}: {points} points</li>
+                    ))}
+                  </ul>
+                  {declareStatus.challenged ? (
+                    <div style={{ color: "red" }}>Challenged! Someone has fewer points than the declarer.</div>
+                  ) : (
+                    <div style={{ color: "green" }}>Congratulations! No one beat your score.</div>
+                  )}
                 </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+              )}
+              {winner && <h2 style={{ color: "green" }}>🏆 GAME WINNER: {winner}</h2>}
+            </div>
+          ) : (
+                        <p>Waiting for all players to join...</p>
+          )}
+        </>
+      )}
     </div>
   );
 }
+
+export default App;
+

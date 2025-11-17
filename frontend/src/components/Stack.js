@@ -1,18 +1,21 @@
 import React from "react";
-import sortCards from "../utils/sortCards";
 import Card from "./Card";
 
-
-export default function Stack({ playedBundles }) {
+export default function Stack({ stack, lastPlayedBundle }) {
   return (
     <div>
-      {(playedBundles || []).slice(-5).map((bundleObj, idx) =>
-        <span key={idx} style={{ display: "inline-block", marginRight: 12 }}>
-          {bundleObj.bundle.map((card, cidx) => (
-            <Card card={card} key={cidx} />
-          ))}
-        </span>
-      )}
+      <div>
+        Stack top:{" "}
+        {(stack || []).slice(-3).map((card, idx) => (
+          <Card card={card} key={idx} />
+        ))}
+      </div>
+      <div>
+        Last played bundle:{" "}
+        {(lastPlayedBundle || []).map((card, idx) => (
+          <Card card={card} key={idx} />
+        ))}
+      </div>
     </div>
   );
 }
