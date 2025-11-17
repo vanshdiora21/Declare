@@ -1,4 +1,3 @@
-// src/components/Hand.js
 import React from "react";
 import sortCards from "../utils/sortCards";
 import Card from "./Card";
