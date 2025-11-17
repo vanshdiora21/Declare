@@ -164,39 +164,8 @@ io.on("connection", (socket) => {
     }
     nextTurn();
   });
-
-  socket.on("playCards", ({ cards }) => {
-    const userId = socket.id;
-    if (activePlayers[currentTurnIndex].id !== userId) return;
-    if (!cards || !Array.isArray(cards) || cards.length === 0 ||
-      !cards.every(card => hands[userId]?.some(hc => hc.value === card.value && hc.suit === card.suit))) return;
-
-    // Multi-card fix: allow same value, ANY suit
-    const allSameValue = cards.length > 1 && cards.every(card => card.value === cards[0].value);
-
-    const isValidSeq = isSequence(cards);
-    if (!(cards.length === 1 || (cards.length > 1 && allSameValue) || isValidSeq)) return;
-
-    for (const card of cards) {
-      hands[userId] = hands[userId].filter(c => !(c.value === card.value && c.suit === card.suit));
-      stack.push(card);
-    }
-    playedBundles.push({ playerId: userId, bundle: [...cards], value: allSameValue ? cards[0].value : null, suit: isValidSeq ? (cards.find(c=>c.value!=="JOKER")||{}).suit : null });
-
-    for (const user of activePlayers) {
-      io.to(user.id).emit("yourHand", hands[user.id] || []);
-      io.to(user.id).emit("handPoints", hands[user.id]? hands[user.id].reduce((acc,c)=>acc+cardPoints[c.value],0) : 0);
-    }
-    io.emit("stackUpdate", stack||[]);
-    io.emit("lastPlayedBundle", getPrevBundle());
-
-    let prev = playedBundles.length >= 2 ? playedBundles[playedBundles.length-2].bundle : null;
-    let skipPick = false;
-    if (prev && bundlesAreCompatible(prev, cards)) skipPick = true;
-    if (skipPick) { nextTurn(); }
-    else { socket.emit("yourPickPhase", { stack: stack||[], deckCount: deck.length, lastPlayedBundle: getPrevBundle() }); }
-  });
-
+  
+  
   socket.on("pickCard", ({ source, cardIdx }) => {
     const userId = socket.id;
     if (activePlayers[currentTurnIndex].id !== userId) return;

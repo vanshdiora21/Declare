@@ -7,8 +7,9 @@ export default function Stack({ stack }) {
   return (
     <div>
       {sortCards((stack || []).slice(-5)).map((card, idx) => (
-        <Card key={idx} card={card} />
+  <   Card key={idx} card={card} />
       ))}
+
     </div>
   );
 }
